@@ -741,6 +741,182 @@ fn check_uses_workspace_ty_subgraph_from_lock() -> Result<()> {
 
 #[test]
 #[cfg(feature = "test-pypi")]
+fn check_uses_locked_ty_direct_dependency_extras() -> Result<()> {
+    let server = PackseServer::new("simple/single-package.toml");
+    let context = uv_test::test_context!("3.12")
+        .with_filter((r"(?m)^WARN Range requests not supported[^\n]*\n", ""));
+
+    context
+        .temp_dir
+        .child("pyproject.toml")
+        .write_str(indoc! {r#"
+        [project]
+        name = "project"
+        version = "0.1.0"
+        requires-python = ">=3.12"
+        dependencies = []
+
+        [dependency-groups]
+        dev = ["ty[cli]"]
+
+        [tool.uv.sources]
+        ty = { workspace = true }
+
+        [tool.uv.workspace]
+        members = ["ty"]
+    "#})?;
+    let ty = context.temp_dir.child("ty");
+    ty.create_dir_all()?;
+    ty.child("pyproject.toml").write_str(indoc! {r#"
+        [project]
+        name = "ty"
+        version = "1.2.3"
+        requires-python = ">=3.12"
+        dependencies = []
+
+        [project.optional-dependencies]
+        cli = ["a==1.0.0"]
+
+        [project.scripts]
+        ty = "ty:main"
+
+        [build-system]
+        requires = ["uv_build>=0.7,<10000"]
+        build-backend = "uv_build"
+    "#})?;
+    let ty_package = ty.child("src").child("ty");
+    ty_package.create_dir_all()?;
+    ty_package.child("__init__.py").write_str(indoc! {r#"
+        import sys
+
+        import a
+
+        def main():
+            if "--version" in sys.argv:
+                print("ty 1.2.3")
+            else:
+                print("All checks passed!")
+    "#})?;
+    context.temp_dir.child("main.py").write_str("x = 1")?;
+
+    uv_snapshot!(
+        context.filters(),
+        context
+            .check()
+            .arg("--no-sync")
+            .arg("--index")
+            .arg(server.index_url())
+            .arg("--show-version"),
+        @"
+    success: true
+    exit_code: 0
+    ----- stdout -----
+    All checks passed!
+
+    ----- stderr -----
+    warning: `uv check` is experimental and may change without warning. Pass `--preview-features check-command` to disable this warning.
+    Installed 2 packages in [TIME]
+    Using ty 1.2.3
+    "
+    );
+
+    assert!(!context.site_packages().join("ty").exists());
+
+    Ok(())
+}
+
+#[test]
+#[cfg(feature = "test-pypi")]
+fn check_uses_locked_ty_project_conflict_context() -> Result<()> {
+    let server = PackseServer::new("simple/single-package.toml");
+    let context = uv_test::test_context!("3.12")
+        .with_filter((r"(?m)^WARN Range requests not supported[^\n]*\n", ""));
+
+    context
+        .temp_dir
+        .child("pyproject.toml")
+        .write_str(indoc! {r#"
+        [project]
+        name = "project"
+        version = "0.1.0"
+        requires-python = ">=3.12"
+        dependencies = []
+
+        [dependency-groups]
+        dev = ["ty", "a==1.0.0"]
+        other = ["ty", "a==2.0.0"]
+
+        [tool.uv]
+        conflicts = [[
+            { group = "dev" },
+            { group = "other" },
+        ]]
+
+        [tool.uv.sources]
+        ty = { workspace = true }
+
+        [tool.uv.workspace]
+        members = ["ty"]
+    "#})?;
+    let ty = context.temp_dir.child("ty");
+    ty.create_dir_all()?;
+    ty.child("pyproject.toml").write_str(indoc! {r#"
+        [project]
+        name = "ty"
+        version = "1.2.3"
+        requires-python = ">=3.12"
+        dependencies = ["a"]
+
+        [project.scripts]
+        ty = "ty:main"
+
+        [build-system]
+        requires = ["uv_build>=0.7,<10000"]
+        build-backend = "uv_build"
+    "#})?;
+    let ty_package = ty.child("src").child("ty");
+    ty_package.create_dir_all()?;
+    ty_package.child("__init__.py").write_str(indoc! {r#"
+        import sys
+
+        import a
+
+        def main():
+            if "--version" in sys.argv:
+                print("ty 1.2.3")
+            else:
+                print("All checks passed!")
+    "#})?;
+    context.temp_dir.child("main.py").write_str("x = 1")?;
+
+    uv_snapshot!(
+        context.filters(),
+        context
+            .check()
+            .arg("--no-sync")
+            .arg("--index")
+            .arg(server.index_url())
+            .arg("--show-version"),
+        @"
+    success: true
+    exit_code: 0
+    ----- stdout -----
+    All checks passed!
+
+    ----- stderr -----
+    warning: `uv check` is experimental and may change without warning. Pass `--preview-features check-command` to disable this warning.
+    Installed 2 packages in [TIME]
+    Using ty 1.2.3
+    "
+    );
+
+    assert!(!context.site_packages().join("ty").exists());
+
+    Ok(())
+}
+
+#[test]
+#[cfg(feature = "test-pypi")]
 fn check_virtual_root_uses_own_ty() -> Result<()> {
     let context =
         uv_test::test_context!("3.12").with_filter((r"ty 0\.0\.17(?: \([^)]*\))?", "ty 0.0.17"));
